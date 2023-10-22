@@ -1,12 +1,23 @@
 import json
 import os
 import bcrypt
-import logging
+import threading
+from datetime import datetime, timedelta
+import time
+import tkinter as tk
 
 class HomeSystem:
     def __init__(self):
         self.user_data = None
         self.load_user_data()
+        self.auto_lock_time = None
+        self.auto_lock_enabled = False
+        self.auto_lock_thread = threading.Thread(target=self.auto_lock_check)
+        self.auto_lock_thread.daemon = True
+        self.auto_lock_thread.start()
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.load_auto_lock_settings()
 
     def load_user_data(self):
         try:
@@ -47,6 +58,25 @@ class HomeSystem:
                 json.dump(self.user_data, f)
         except Exception as e:
             print(f"Error saving user data: {e}")
+
+    def save_auto_lock_settings(self):
+        auto_lock_data = {
+            'auto_lock_time': self.auto_lock_time.strftime('%H:%M:%S') if self.auto_lock_time else None,
+            'auto_lock_enabled': self.auto_lock_enabled
+        }
+        with open('auto_lock_settings.json', 'w') as f:
+            json.dump(auto_lock_data, f)
+
+    def load_auto_lock_settings(self):
+        if os.path.exists('auto_lock_settings.json'):
+            with open('auto_lock_settings.json', 'r') as f:
+                auto_lock_data = json.load(f)
+                self.auto_lock_time = datetime.strptime(auto_lock_data['auto_lock_time'], '%H:%M:%S').time() if \
+                auto_lock_data['auto_lock_time'] else None
+                self.auto_lock_enabled = auto_lock_data['auto_lock_enabled']
+        else:
+            self.auto_lock_time = None
+            self.auto_lock_enabled = False
 
     def set_initial_user(self, username, password):
         try:
@@ -93,7 +123,7 @@ class HomeSystem:
 
     def deactivate_panic_mode(self, password):
         if self.user_data['password'] is None or password is None:
-            logging.error("Password is not set or input password is None.")
+            print("Password is not set or input password is None.")
             return False
         if bcrypt.checkpw(password.encode('utf-8'), self.user_data['password'].encode('utf-8')):
             self.user_data['panic_lock'] = False
@@ -103,6 +133,18 @@ class HomeSystem:
 
     def get_status(self):
         return self.user_data['doors'], self.user_data['panic_lock']
+
+    def get_time_status(self):
+        auto_lock_status = "Disabled"
+        remaining_time = "N/A"
+        if self.auto_lock_enabled:
+            auto_lock_status = "Enabled"
+            now = datetime.now()
+            auto_lock_datetime = datetime.combine(now.date(), self.auto_lock_time)
+            if auto_lock_datetime < now:
+                auto_lock_datetime += timedelta(days=1)  # Set to the same time on the next day
+            remaining_time = str(auto_lock_datetime - now)
+        return self.user_data['doors'], self.user_data['panic_lock'], auto_lock_status, remaining_time
 
     def save_door_status(self):
         try:
@@ -117,7 +159,42 @@ class HomeSystem:
                 with open('door_status.json', 'r') as f:
                     previous_status = json.load(f)
                     for door in self.user_data['doors']:
+                        if door in previous_status:
+                            self.user_data['doors'][door] = previous_status[door]
                         if door in previous_status and self.user_data['doors'][door] != previous_status[door]:
                             print(f"Warning: {door.replace('_', ' ').title()} status has changed since last exit.")
+            self.save_user_data()
         except Exception as e:
             print(f"Error loading door status: {e}")
+
+    def set_username(self, new_username):
+        self.user_data['username'] = new_username
+        self.save_user_data()
+
+    def set_password(self, new_password):
+        hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+        self.user_data['password'] = hashed_password.decode('utf-8')
+        self.save_user_data()
+
+    def verify_password(self, password):
+        return bcrypt.checkpw(password.encode('utf-8'), self.user_data['password'].encode('utf-8'))
+
+    def auto_lock_check(self):
+        while True:
+            if self.auto_lock_enabled and self.auto_lock_time:
+                current_time = datetime.now().time()
+                if current_time >= self.auto_lock_time:
+                    self.panic_lock()
+                    self.disable_auto_lock()
+                    # Reset auto lock for the next day
+                    self.auto_lock_time = (datetime.combine(datetime.today(), self.auto_lock_time) + timedelta(days=1)).time()
+            time.sleep(60)
+
+    def set_auto_lock_time(self, auto_lock_time):
+        self.auto_lock_time = auto_lock_time
+        self.auto_lock_enabled = True
+        self.save_auto_lock_settings()
+
+    def disable_auto_lock(self):
+        self.auto_lock_enabled = False
+        self.save_auto_lock_settings()
