@@ -1,0 +1,172 @@
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+from home_system_backendA import HomeSystem
+
+class SetupWindow(tk.Toplevel):
+    def __init__(self, home_system, master=None):
+        super().__init__(master)
+        self.home_system = home_system
+        self.title("Setup")
+        self.geometry("500x500")
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.create_widgets()
+        self.grab_set()
+        self.wait_window()
+
+    def create_widgets(self):
+        self.username_label = tk.Label(self, text="Username:")
+        self.username_label.pack(pady=5)
+        self.username_entry = tk.Entry(self)
+        self.username_entry.pack(pady=5)
+
+        self.password_label = tk.Label(self, text="Password:")
+        self.password_label.pack(pady=5)
+        self.password_entry = tk.Entry(self, show="*")
+        self.password_entry.pack(pady=5)
+
+        self.confirm_password_label = tk.Label(self, text="Confirm Password:")
+        self.confirm_password_label.pack(pady=5)
+        self.confirm_password_entry = tk.Entry(self, show="*")
+        self.confirm_password_entry.pack(pady=5)
+
+        self.note_label = tk.Label(self, text="Note: Hit Panic and enter password to deactivate panic mode")
+        self.note_label.pack(pady=5)
+
+        self.submit_button = tk.Button(self, text="Submit", command=self.submit)
+        self.submit_button.pack(pady=20)
+
+    def submit(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        confirm_password = self.confirm_password_entry.get()
+
+        if not username or not password:
+            messagebox.showerror("Error", "Username and password cannot be empty")
+            return
+
+        if password != confirm_password:
+            messagebox.showerror("Error", "Passwords do not match")
+            return
+
+        if self.home_system.set_initial_user(username, password):
+            self.destroy()
+            LoginWindow(self.home_system, master=self.master)
+        else:
+            messagebox.showerror("Error", "Failed to set initial user")
+
+    def on_closing(self):
+        if messagebox.askyesno("Exit", "Are you sure you want to exit?"):
+            self.destroy()
+            self.master.destroy()
+
+class LoginWindow(tk.Toplevel):
+    def __init__(self, home_system, master=None):
+        super().__init__(master)
+        self.home_system = home_system
+        self.title("Login")
+        self.geometry("500x500")
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.create_widgets()
+        self.grab_set()
+        self.wait_window()
+
+    def create_widgets(self):
+        self.username_label = tk.Label(self, text="Username:")
+        self.username_label.pack(pady=5)
+        self.username_entry = tk.Entry(self)
+        self.username_entry.pack(pady=5)
+
+        self.password_label = tk.Label(self, text="Password:")
+        self.password_label.pack(pady=5)
+        self.password_entry = tk.Entry(self, show="*")
+        self.password_entry.pack(pady=5)
+
+        self.login_button = tk.Button(self, text="Login", command=self.login)
+        self.login_button.pack(pady=20)
+
+    def login(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        if self.home_system.login(username, password):
+            self.destroy()
+            HomeSystemApp(self.home_system, master=self.master)
+        else:
+            messagebox.showerror("Error", "Invalid username or password")
+
+    def on_closing(self):
+        if messagebox.askyesno("Exit", "Are you sure you want to exit?"):
+            self.destroy()
+            self.master.destroy()
+
+class HomeSystemApp(tk.Toplevel):
+    def __init__(self, home_system, master=None):
+        super().__init__(master)
+        self.home_system = home_system
+        self.title("Home System")
+        self.geometry("500x500")
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.create_widgets()
+        self.grab_set()
+        self.wait_window()
+        self.home_system.load_door_status()
+
+    def create_widgets(self):
+        self.status_label = tk.Label(self, text="Status: ")
+        self.status_label.pack(pady=5)
+        self.update_status()
+
+        self.panic_button = tk.Button(self, text="Panic Lock", command=self.panic_lock)
+        self.panic_button.pack(pady=5)
+
+        self.door_buttons = {}
+        for door in self.home_system.user_data['doors']:
+            self.door_buttons[door] = tk.Button(self, text=door.replace('_', ' ').title(),
+                                                command=lambda d=door: self.toggle_door(d))
+            self.door_buttons[door].pack(pady=5)
+
+    def update_status(self):
+        doors, panic_lock = self.home_system.get_status()
+        status_text = "Panic Lock: " + ("Active" if panic_lock else "Inactive") + "\n"
+        status_text += "\n".join(
+            [door.replace('_', ' ').title() + ": " + ("Locked" if state else "Unlocked") for door, state in
+             doors.items()])
+        self.status_label.config(text=status_text)
+
+    def panic_lock(self):
+        if self.home_system.user_data['panic_lock']:
+            password = simpledialog.askstring("Password", "Enter password to deactivate panic mode:", show='*')
+            if password is None:
+                return  # User closed the password prompt, just return
+            if self.home_system.deactivate_panic_mode(password):
+                messagebox.showinfo("Panic Lock", "Panic Lock Deactivated")
+            else:
+                messagebox.showerror("Error", "Invalid password")
+        else:
+            self.home_system.panic_lock()
+            messagebox.showinfo("Panic Lock", "Panic Lock Activated")
+        self.update_status()
+
+    def toggle_door(self, door):
+        if not self.home_system.user_data['panic_lock']:
+            _, state = self.home_system.toggle_door(door)
+            messagebox.showinfo(door.replace('_', ' ').title(),
+                                door.replace('_', ' ').title() + " " + ("Locked" if state else "Unlocked"))
+            self.update_status()
+        else:
+            messagebox.showerror("Error", "Panic Lock is active. Deactivate it to unlock doors.")
+
+    def on_closing(self):
+        if messagebox.askyesno("Exit", "Are you sure you want to exit?"):
+            self.home_system.save_door_status()
+            self.destroy()
+            self.master.destroy()
+
+if __name__ == "__main__":
+    home_system = HomeSystem()
+    root = tk.Tk()
+    root.withdraw()
+    if home_system.user_data['username'] and home_system.user_data['password']:
+        app = LoginWindow(home_system, master=root)
+    else:
+        app = SetupWindow(home_system, master=root)
+    root.mainloop()
