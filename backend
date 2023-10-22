@@ -1,0 +1,123 @@
+import json
+import os
+import bcrypt
+import logging
+
+class HomeSystem:
+    def __init__(self):
+        self.user_data = None
+        self.load_user_data()
+
+    def load_user_data(self):
+        try:
+            if os.path.exists('user_data.json'):
+                with open('user_data.json', 'r') as f:
+                    self.user_data = json.load(f)
+            else:
+                self.user_data = {
+                    'username': '',
+                    'password': '',
+                    'doors': {
+                        'front_door': False,
+                        'back_door': False,
+                        'master_bedroom': False,
+                        'guest_room_1': False,
+                        'guest_room_2': False,
+                    },
+                    'panic_lock': False
+                }
+        except Exception as e:
+            print(f"Error loading user data: {e}")
+            self.user_data = {
+                'username': '',
+                'password': '',
+                'doors': {
+                    'front_door': False,
+                    'back_door': False,
+                    'master_bedroom': False,
+                    'guest_room_1': False,
+                    'guest_room_2': False,
+                },
+                'panic_lock': False
+            }
+
+    def save_user_data(self):
+        try:
+            with open('user_data.json', 'w') as f:
+                json.dump(self.user_data, f)
+        except Exception as e:
+            print(f"Error saving user data: {e}")
+
+    def set_initial_user(self, username, password):
+        try:
+            hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            self.user_data['username'] = username
+            self.user_data['password'] = hashed_password.decode('utf-8')
+            self.save_user_data()
+            return True
+        except Exception as e:
+            print(f"Error setting initial user: {e}")
+            return False
+
+    def login(self, username, password):
+        try:
+            if username == self.user_data['username']:
+                return bcrypt.checkpw(password.encode('utf-8'), self.user_data['password'].encode('utf-8'))
+            return False
+        except Exception as e:
+            print(f"Error during login: {e}")
+            return False
+
+    def toggle_door(self, door_name):
+        try:
+            if door_name in self.user_data['doors']:
+                self.user_data['doors'][door_name] = not self.user_data['doors'][door_name]
+                self.save_user_data()
+                return True, self.user_data['doors'][door_name]
+            return False, None
+        except Exception as e:
+            print(f"Error toggling door: {e}")
+            return False, None
+
+    def panic_lock(self):
+        try:
+            self.user_data['panic_lock'] = not self.user_data['panic_lock']
+            if self.user_data['panic_lock']:
+                for door in self.user_data['doors']:
+                    self.user_data['doors'][door] = True
+            self.save_user_data()
+            return self.user_data['panic_lock']
+        except Exception as e:
+            print(f"Error toggling panic lock: {e}")
+            return False
+
+    def deactivate_panic_mode(self, password):
+        if self.user_data['password'] is None or password is None:
+            logging.error("Password is not set or input password is None.")
+            return False
+        if bcrypt.checkpw(password.encode('utf-8'), self.user_data['password'].encode('utf-8')):
+            self.user_data['panic_lock'] = False
+            self.save_user_data()
+            return True
+        return False
+
+    def get_status(self):
+        return self.user_data['doors'], self.user_data['panic_lock']
+
+    def save_door_status(self):
+        try:
+            with open('door_status.json', 'w') as f:
+                json.dump(self.user_data['doors'], f)
+        except Exception as e:
+            print(f"Error saving door status: {e}")
+
+    def load_door_status(self):
+        try:
+            if os.path.exists('door_status.json'):
+                with open('door_status.json', 'r') as f:
+                    previous_status = json.load(f)
+                    for door in self.user_data['doors']:
+                        if door in previous_status and self.user_data['doors'][door] != previous_status[door]:
+                            print(f"Warning: {door.replace('_', ' ').title()} status has changed since last exit.")
+        except Exception as e:
+            print(f"Error loading door status: {e}")
