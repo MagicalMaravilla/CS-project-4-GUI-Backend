@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 from home_system_backendA import HomeSystem
+from datetime import datetime
 
 class SetupWindow(tk.Toplevel):
     def __init__(self, home_system, master=None):
@@ -28,6 +29,9 @@ class SetupWindow(tk.Toplevel):
         self.confirm_password_label.pack(pady=5)
         self.confirm_password_entry = tk.Entry(self, show="*")
         self.confirm_password_entry.pack(pady=5)
+
+        self.logout_button = tk.Button(self, text="Logout", command=self.logout)
+        self.logout_button.pack(pady=5)
 
         self.note_label = tk.Label(self, text="Note: Hit Panic and enter password to deactivate panic mode")
         self.note_label.pack(pady=5)
@@ -98,6 +102,50 @@ class LoginWindow(tk.Toplevel):
             self.destroy()
             self.master.destroy()
 
+class AutoLockSetupWindow(tk.Toplevel):
+    def __init__(self, home_system, master=None):
+        super().__init__(master)
+        self.home_system = home_system
+        self.title("Auto Lock Setup")
+        self.geometry("300x200")
+        self.create_widgets()
+
+    def create_widgets(self):
+        self.info_label = tk.Label(self, text="Set up Auto Lock Time")
+        self.info_label.pack(pady=10)
+
+        self.time_label = tk.Label(self, text="Time (HH:MM):")
+        self.time_label.pack(pady=5)
+
+        self.time_entry = tk.Entry(self)
+        self.time_entry.pack(pady=5)
+
+        self.set_button = tk.Button(self, text="Set", command=self.set_auto_lock)
+        self.set_button.pack(pady=10)
+
+        self.disable_button = tk.Button(self, text="Disable Auto Lock", command=self.disable_auto_lock)
+        self.disable_button.pack(pady=10)
+
+    def set_auto_lock(self):
+        time_str = self.time_entry.get()
+        try:
+            hours, minutes = map(int, time_str.split(':'))
+            auto_lock_datetime = datetime.now().replace(hour=hours, minute=minutes, second=0, microsecond=0)
+            if auto_lock_datetime < datetime.now():
+                messagebox.showerror("Error", "Auto Lock time cannot be in the past.")
+                return
+            self.home_system.set_auto_lock_time(auto_lock_datetime.time())
+            messagebox.showinfo("Success", "Auto Lock Time Set Successfully")
+            self.master.update_status()  # Update the status in the main window
+            self.destroy()
+        except ValueError:
+            messagebox.showerror("Error", "Invalid time format. Please enter time in HH:MM format.")
+
+    def disable_auto_lock(self):
+        self.home_system.disable_auto_lock()
+        messagebox.showinfo("Success", "Auto Lock Disabled")
+
+
 class HomeSystemApp(tk.Toplevel):
     def __init__(self, home_system, master=None):
         super().__init__(master)
@@ -105,15 +153,41 @@ class HomeSystemApp(tk.Toplevel):
         self.title("Home System")
         self.geometry("500x500")
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        # Initialize buttons to None
+        self.reset_username_button = None
+        self.reset_password_button = None
+        self.logout_button = None
+
         self.create_widgets()
         self.grab_set()
         self.wait_window()
         self.home_system.load_door_status()
 
+    def open_auto_lock_setup(self):
+        AutoLockSetupWindow(self.home_system, master=self)
+
+    def enable_auto_lock(self):
+        time_str = simpledialog.askstring("Auto Lock Time", "Enter Auto Lock time (HH:MM):")
+        if time_str:
+            try:
+                hours, minutes = map(int, time_str.split(':'))
+                auto_lock_time = datetime.time(hours, minutes)
+                self.home_system.set_auto_lock_time(auto_lock_time)
+                messagebox.showinfo("Auto Lock", "Auto Lock has been enabled.")
+            except ValueError:
+                messagebox.showerror("Error", "Invalid time format. Please enter time in HH:MM format.")
+        else:
+            messagebox.showinfo("Auto Lock", "Auto Lock setup cancelled.")
+
+    def disable_auto_lock(self):
+        self.home_system.disable_auto_lock()
+        messagebox.showinfo("Success", "Auto Lock Disabled")
+        self.update_status()  # Update the status to reflect the changes
+
     def create_widgets(self):
         self.status_label = tk.Label(self, text="Status: ")
         self.status_label.pack(pady=5)
-        self.update_status()
 
         self.panic_button = tk.Button(self, text="Panic Lock", command=self.panic_lock)
         self.panic_button.pack(pady=5)
@@ -124,13 +198,55 @@ class HomeSystemApp(tk.Toplevel):
                                                 command=lambda d=door: self.toggle_door(d))
             self.door_buttons[door].pack(pady=5)
 
+        button_frame = tk.Frame(self)
+        button_frame.pack(pady=10)
+
+        self.reset_username_button = tk.Button(button_frame, text="Reset Username", command=self.reset_username,
+                                               state=tk.NORMAL)
+        self.reset_username_button.pack(side=tk.LEFT, padx=5)
+
+        self.reset_password_button = tk.Button(button_frame, text="Reset Password", command=self.reset_password,
+                                               state=tk.NORMAL)
+        self.reset_password_button.pack(side=tk.LEFT, padx=5)
+
+        self.logout_button = tk.Button(button_frame, text="Logout", command=self.logout)
+        self.logout_button.pack(side=tk.LEFT, padx=5)
+
+        # Auto Lock Setup Button
+        self.auto_lock_button = tk.Button(self, text="Auto Lock Setup", command=self.open_auto_lock_setup)
+        self.auto_lock_button.pack(pady=5)
+
+        # Disable Auto Lock Button
+        self.disable_auto_lock_button = tk.Button(self, text="Disable Auto Lock", command=self.disable_auto_lock)
+        self.disable_auto_lock_button.pack(pady=5)
+
+        self.update_status()
+
     def update_status(self):
-        doors, panic_lock = self.home_system.get_status()
+        doors, panic_lock, auto_lock_status, remaining_time = self.home_system.get_time_status()
         status_text = "Panic Lock: " + ("Active" if panic_lock else "Inactive") + "\n"
+        status_text += "Auto Lock: " + auto_lock_status + "\n"
+        status_text += "Time until Auto Lock: " + remaining_time + "\n"
         status_text += "\n".join(
             [door.replace('_', ' ').title() + ": " + ("Locked" if state else "Unlocked") for door, state in
              doors.items()])
         self.status_label.config(text=status_text)
+
+        for door_button in self.door_buttons.values():
+            door_button.config(state=tk.DISABLED if panic_lock else tk.NORMAL)
+
+        if panic_lock:
+            self.reset_username_button.config(state=tk.DISABLED)
+            self.reset_password_button.config(state=tk.DISABLED)
+            self.logout_button.config(state=tk.NORMAL)
+            self.auto_lock_button.config(state=tk.DISABLED)
+            self.disable_auto_lock_button.config(state=tk.DISABLED)
+        else:
+            self.reset_username_button.config(state=tk.NORMAL)
+            self.reset_password_button.config(state=tk.NORMAL)
+            self.logout_button.config(state=tk.NORMAL)
+            self.auto_lock_button.config(state=tk.NORMAL)
+            self.disable_auto_lock_button.config(state=tk.NORMAL)
 
     def panic_lock(self):
         if self.home_system.user_data['panic_lock']:
@@ -139,11 +255,13 @@ class HomeSystemApp(tk.Toplevel):
                 return  # User closed the password prompt, just return
             if self.home_system.deactivate_panic_mode(password):
                 messagebox.showinfo("Panic Lock", "Panic Lock Deactivated")
-            else:
-                messagebox.showerror("Error", "Invalid password")
+                self.auto_lock_button.config(state=tk.NORMAL)
+                self.disable_auto_lock_button.config(state=tk.NORMAL)
         else:
             self.home_system.panic_lock()
             messagebox.showinfo("Panic Lock", "Panic Lock Activated")
+            self.auto_lock_button.config(state=tk.DISABLED)
+            self.disable_auto_lock_button.config(state=tk.DISABLED)
         self.update_status()
 
     def toggle_door(self, door):
@@ -155,18 +273,47 @@ class HomeSystemApp(tk.Toplevel):
         else:
             messagebox.showerror("Error", "Panic Lock is active. Deactivate it to unlock doors.")
 
+    def reset_username(self):
+        password = simpledialog.askstring("Password", "Enter your password:", show='*')
+        if password is None:
+            return
+        if self.home_system.verify_password(password):
+            new_username = simpledialog.askstring("New Username", "Enter your new username:")
+            if new_username:
+                self.home_system.set_username(new_username)
+                messagebox.showinfo("Success", "Username has been reset successfully.")
+        else:
+            messagebox.showerror("Error", "Invalid password")
+
+    def reset_password(self):
+        password = simpledialog.askstring("Password", "Enter your current password:", show='*')
+        if password is None:
+            return
+        if self.home_system.verify_password(password):
+            new_password = simpledialog.askstring("New Password", "Enter your new password:", show='*')
+            if new_password:
+                self.home_system.set_password(new_password)
+                messagebox.showinfo("Success", "Password has been reset successfully.")
+        else:
+            messagebox.showerror("Error", "Invalid password")
+
+    def logout(self):
+        self.destroy()
+        LoginWindow(self.home_system, master=self.master)
+
     def on_closing(self):
         if messagebox.askyesno("Exit", "Are you sure you want to exit?"):
             self.home_system.save_door_status()
             self.destroy()
             self.master.destroy()
 
+    def open_auto_lock_setup(self):
+        AutoLockSetupWindow(self.home_system, master=self)
+
 if __name__ == "__main__":
     home_system = HomeSystem()
-    root = tk.Tk()
-    root.withdraw()
-    if home_system.user_data['username'] and home_system.user_data['password']:
-        app = LoginWindow(home_system, master=root)
+    if home_system.user_data.get('username') and home_system.user_data.get('password'):
+        LoginWindow(home_system, master=home_system.root)
     else:
-        app = SetupWindow(home_system, master=root)
-    root.mainloop()
+        SetupWindow(home_system, master=home_system.root)
+    home_system.root.mainloop()
